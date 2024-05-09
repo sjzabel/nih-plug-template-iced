@@ -74,6 +74,7 @@ impl Default for {{ cookiecutter.struct_name }}Params {
             loop_range_seconds_end: Arc::new(AtomicF64::new(0.0)),
             loop_range_beats_start: Arc::new(AtomicF64::new(0.0)),
             loop_range_beats_end: Arc::new(AtomicF64::new(0.0)),
+        }
     }
 }
 

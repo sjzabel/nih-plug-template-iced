@@ -1,9 +1,17 @@
+use atomic_float::AtomicF64;
 use nih_plug::prelude::*;
+use nih_plug_iced::IcedState;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering::Relaxed;
+use std::sync::atomic::AtomicI32;
+use std::sync::atomic::AtomicI64;
 
-// This is a shortened version of the gain example with most comments removed, check out
-// https://github.com/robbert-vdh/nih-plug/blob/master/plugins/examples/gain/src/lib.rs to get
+// This is a mostly gutted version of the nih_plug_iced tutorial check out
+// https://github.com/robbert-vdh/nih-plug/blob/master/plugins/examples/gain_gui_iced/src/lib.rs to get
 // started
+
+mod editor;
 
 struct {{ cookiecutter.struct_name }} {
     params: Arc<{{ cookiecutter.struct_name }}Params>,
@@ -11,12 +19,28 @@ struct {{ cookiecutter.struct_name }} {
 
 #[derive(Params)]
 struct {{ cookiecutter.struct_name }}Params {
-    /// The parameter's ID is used to identify the parameter in the wrappred plugin API. As long as
-    /// these IDs remain constant, you can rename and reorder these fields as you wish. The
-    /// parameters are exposed to the host in the same order they were defined. In this case, this
-    /// gain parameter is stored as linear gain while the values are displayed in decibels.
-    #[id = "gain"]
-    pub gain: FloatParam,
+    /// The editor state, saved together with the parameter state so the custom scaling can be
+    /// restored.
+    #[persist = "editor-state"]
+    editor_state: Arc<IcedState>,
+
+    tempo: Arc<AtomicF64>,
+    playing: Arc<AtomicBool>,
+    preroll_active: Arc<AtomicBool>,
+    recording: Arc<AtomicBool>,
+    time_sig_denominator: Arc<AtomicI32>,
+    time_sig_numerator: Arc<AtomicI32>,
+    pos_samples: Arc<AtomicI64>,
+    pos_seconds: Arc<AtomicF64>,
+    pos_beats: Arc<AtomicF64>,
+    bar_start_pos_beats: Arc<AtomicF64>,
+    bar_number: Arc<AtomicI32>,
+    loop_range_samples_start: Arc<AtomicI64>,
+    loop_range_samples_end: Arc<AtomicI64>,
+    loop_range_seconds_start: Arc<AtomicF64>,
+    loop_range_seconds_end: Arc<AtomicF64>,
+    loop_range_beats_start: Arc<AtomicF64>,
+    loop_range_beats_end: Arc<AtomicF64>,
 }
 
 impl Default for {{ cookiecutter.struct_name }} {
@@ -30,30 +54,26 @@ impl Default for {{ cookiecutter.struct_name }} {
 impl Default for {{ cookiecutter.struct_name }}Params {
     fn default() -> Self {
         Self {
-            // This gain is stored as linear gain. NIH-plug comes with useful conversion functions
-            // to treat these kinds of parameters as if we were dealing with decibels. Storing this
-            // as decibels is easier to work with, but requires a conversion for every sample.
-            gain: FloatParam::new(
-                "Gain",
-                util::db_to_gain(0.0),
-                FloatRange::Skewed {
-                    min: util::db_to_gain(-30.0),
-                    max: util::db_to_gain(30.0),
-                    // This makes the range appear as if it was linear when displaying the values as
-                    // decibels
-                    factor: FloatRange::gain_skew_factor(-30.0, 30.0),
-                },
-            )
-            // Because the gain parameter is stored as linear gain instead of storing the value as
-            // decibels, we need logarithmic smoothing
-            .with_smoother(SmoothingStyle::Logarithmic(50.0))
-            .with_unit(" dB")
-            // There are many predefined formatters we can use here. If the gain was stored as
-            // decibels instead of as a linear gain value, we could have also used the
-            // `.with_step_size(0.1)` function to get internal rounding.
-            .with_value_to_string(formatters::v2s_f32_gain_to_db(2))
-            .with_string_to_value(formatters::s2v_f32_gain_to_db()),
-        }
+            editor_state: editor::default_state(),
+
+            // Host parameters to pass to the GUI
+            tempo: Arc::new(AtomicF64::new(120.0)),
+            playing: Arc::new(AtomicBool::new(false)),
+            preroll_active: Arc::new(AtomicBool::new(false)),
+            recording: Arc::new(AtomicBool::new(false)),
+            time_sig_denominator: Arc::new(AtomicI32::new(4)),
+            time_sig_numerator: Arc::new(AtomicI32::new(4)),
+            pos_samples: Arc::new(AtomicI64::new(0)),
+            pos_seconds: Arc::new(AtomicF64::new(0.0)),
+            pos_beats: Arc::new(AtomicF64::new(0.0)),
+            bar_start_pos_beats: Arc::new(AtomicF64::new(0.0)),
+            bar_number: Arc::new(AtomicI32::new(0)),
+            loop_range_samples_start: Arc::new(AtomicI64::new(0)),
+            loop_range_samples_end: Arc::new(AtomicI64::new(0)),
+            loop_range_seconds_start: Arc::new(AtomicF64::new(0.0)),
+            loop_range_seconds_end: Arc::new(AtomicF64::new(0.0)),
+            loop_range_beats_start: Arc::new(AtomicF64::new(0.0)),
+            loop_range_beats_end: Arc::new(AtomicF64::new(0.0)),
     }
 }
 
@@ -99,6 +119,13 @@ impl Plugin for {{ cookiecutter.struct_name }} {
         self.params.clone()
     }
 
+    fn editor(&mut self, _async_executor: AsyncExecutor<Self>) -> Option<Box<dyn Editor>> {
+        editor::create(
+            self.params.clone(),
+            self.params.editor_state.clone(),
+        )
+    }
+
     fn initialize(
         &mut self,
         _audio_io_layout: &AudioIOLayout,
@@ -123,11 +150,55 @@ impl Plugin for {{ cookiecutter.struct_name }} {
         _context: &mut impl ProcessContext<Self>,
     ) -> ProcessStatus {
         for channel_samples in buffer.iter_samples() {
-            // Smoothing is optionally built into the parameters themselves
-            let gain = self.params.gain.smoothed.next();
+            for sample in channel_samples {}
 
-            for sample in channel_samples {
-                *sample *= gain;
+            // To save resources, a plugin can (and probably should!) only perform expensive
+            // calculations that are only displayed on the GUI while the GUI is open
+            if self.params.editor_state.is_open() {
+                if let Some(tempo) = context.transport().tempo {
+                    self.params.tempo.store(tempo, Relaxed);
+                }
+
+                self.params.playing.store(context.transport().playing, Relaxed);
+                if let Some(preroll_active) = context.transport().preroll_active {
+                    self.params.preroll_active.store(preroll_active, Relaxed);
+                }
+
+                self.params.recording.store(context.transport().recording, Relaxed);
+
+                if let Some(time_sig_denominator) = context.transport().time_sig_denominator {
+                    self.params.time_sig_denominator.store(time_sig_denominator, Relaxed);
+                }
+                if let Some(time_sig_numerator) = context.transport().time_sig_numerator {
+                    self.params.time_sig_numerator.store(time_sig_numerator, Relaxed);
+                }
+                if let Some(pos_samples) = context.transport().pos_samples() {
+                    self.params.pos_samples.store(pos_samples, Relaxed);
+                }
+                if let Some(pos_seconds) = context.transport().pos_seconds() {
+                    self.params.pos_seconds.store(pos_seconds, Relaxed);
+                }
+                if let Some(pos_beats) = context.transport().pos_beats() {
+                    self.params.pos_beats.store(pos_beats, Relaxed);
+                }
+                if let Some(bar_start_pos_beats) = context.transport().bar_start_pos_beats() {
+                    self.params.bar_start_pos_beats.store(bar_start_pos_beats, Relaxed);
+                }
+                if let Some(bar_number) = context.transport().bar_number() {
+                    self.params.bar_number.store(bar_number, Relaxed);
+                }
+                if let Some((loop_range_samples_start,loop_range_samples_end)) = context.transport().loop_range_samples() {
+                    self.params.loop_range_samples_start.store(loop_range_samples_start, Relaxed);
+                    self.params.loop_range_samples_end.store(loop_range_samples_end, Relaxed);
+                }
+                if let Some((loop_range_seconds_start,loop_range_seconds_end)) = context.transport().loop_range_seconds() {
+                    self.params.loop_range_seconds_start.store(loop_range_seconds_start, Relaxed);
+                    self.params.loop_range_seconds_end.store(loop_range_seconds_end, Relaxed);
+                }
+                if let Some((loop_range_beats_start,loop_range_beats_end)) = context.transport().loop_range_beats() {
+                    self.params.loop_range_beats_start.store(loop_range_beats_start, Relaxed);
+                    self.params.loop_range_beats_end.store(loop_range_beats_end, Relaxed);
+                }
             }
         }
 
@@ -142,7 +213,12 @@ impl ClapPlugin for {{ cookiecutter.struct_name }} {
     const CLAP_SUPPORT_URL: Option<&'static str> = None;
 
     // Don't forget to change these features
-    const CLAP_FEATURES: &'static [ClapFeature] = &[ClapFeature::AudioEffect, ClapFeature::Stereo];
+    const CLAP_FEATURES: &'static [ClapFeature] = &[
+        // ClapFeature::AudioEffect,
+        // ClapFeature::Stereo,
+        // ClapFeature::Mono,
+        ClapFeature::Utility,
+    ];
 }
 
 impl Vst3Plugin for {{ cookiecutter.struct_name }} {

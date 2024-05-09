@@ -26,7 +26,7 @@ struct {{ cookiecutter.struct_name }}Editor {
 #[derive(Debug, Clone, Copy)]
 enum Message {
     /// Update a parameter's value.
-    // ParamUpdate(nih_widgets::ParamMessage),
+    ParamUpdate(nih_widgets::ParamMessage),
 }
 
 impl IcedEditor for {{ cookiecutter.struct_name }}Editor {

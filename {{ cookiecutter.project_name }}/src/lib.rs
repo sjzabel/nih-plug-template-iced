@@ -151,7 +151,7 @@ impl Plugin for {{ cookiecutter.struct_name }} {
         context: &mut impl ProcessContext<Self>,
     ) -> ProcessStatus {
         for channel_samples in buffer.iter_samples() {
-            for sample in channel_samples {}
+            for _sample in channel_samples {}
 
             // To save resources, a plugin can (and probably should!) only perform expensive
             // calculations that are only displayed on the GUI while the GUI is open

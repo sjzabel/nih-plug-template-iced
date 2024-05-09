@@ -26,7 +26,7 @@ struct {{ cookiecutter.struct_name }}Editor {
 #[derive(Debug, Clone, Copy)]
 enum Message {
     /// Update a parameter's value.
-    ParamUpdate(nih_widgets::ParamMessage),
+    // ParamUpdate(nih_widgets::ParamMessage),
 }
 
 impl IcedEditor for {{ cookiecutter.struct_name }}Editor {
@@ -70,7 +70,7 @@ impl IcedEditor for {{ cookiecutter.struct_name }}Editor {
         let playing = self.params.playing.load(Relaxed);
         let playing_text = format!("Playing: {}", playing);
 
-        let preroll_active = self.params.playing.load(Relaxed);
+        let preroll_active = self.params.preroll_active.load(Relaxed);
         let preroll_active_text = format!("Pre-Roll Active: {}", playing);
 
         let recording = self.params.recording.load(Relaxed);
